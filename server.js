@@ -240,5 +240,9 @@ io.on('connection', async (socket) => {
   });
 });
 
+app.get('/', (req, res) => {
+  res.send('Nothing to see here');
+});
+
 // eslint-disable-next-line no-console
-server.listen(1337, () => console.log('running on 1337'));
+server.listen(5000, () => console.log('running on 5000'));
