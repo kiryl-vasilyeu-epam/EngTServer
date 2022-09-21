@@ -13,6 +13,7 @@ app.use((req, res, next) => {
 });
 
 const SHEET = 'sheet1';
+// const SHEET = 'sheet2';
 
 const server = require('http').createServer(app);
 const { Server } = require('socket.io');
@@ -55,11 +56,12 @@ const {
   uniqueId, drop, chunk,
 } = require('lodash');
 
-const clients = new Map();
+const users = new Map();
+const admins = new Map();
 let textFieldValue = '';
 
-const getOnlineUsers = () => [...clients.entries()]
-  .map(([id, { name, isAdmin }]) => ({ isAdmin, id, name }));
+const getOnlineUsers = () => [...users.entries()]
+  .map(([id, { name }]) => ({ id, name }));
 
 const combineRest = ([first, ...rest] = []) => [first, rest.join('')];
 
@@ -67,10 +69,11 @@ io.on('connection', async (socket) => {
   const { sheet, defaultOptions } = await getSpreadSheet();
   const id = uniqueId('client_');
   let userName;
+  let isAdmin = false;
 
   socket.on('registerName', async (name) => {
     try {
-      clients.set(id, { name, isAdmin: false, socket });
+      users.set(id, { name, socket });
       userName = name;
 
       const getRows = await sheet.get(defaultOptions);
@@ -95,6 +98,9 @@ io.on('connection', async (socket) => {
               values: [[name, ...useAnswerChunk]],
             },
           });
+          admins.forEach(({ socket: clSocket }) => {
+            clSocket.emit('updateActiveUsers', { userName, userAnswer });
+          });
         } else {
           [, userAnswer] = combineRest(userData);
         }
@@ -102,10 +108,8 @@ io.on('connection', async (socket) => {
       }
 
       const onlineUsers = getOnlineUsers();
-      clients.forEach(({ socket: clSocket, isAdmin }) => {
-        if (isAdmin) {
-          clSocket.emit('loadOnlineUsers', JSON.stringify(onlineUsers));
-        }
+      admins.forEach(({ socket: clSocket }) => {
+        clSocket.emit('loadOnlineUsers', JSON.stringify(onlineUsers));
       });
       socket.emit('loadTextValue', textFieldValue);
     } catch (e) {
@@ -136,10 +140,8 @@ io.on('connection', async (socket) => {
         },
       });
 
-      clients.forEach(({ socket: clSocket, isAdmin }) => {
-        if (isAdmin) {
-          clSocket.emit('updateActiveUsers', { userName, userAnswer });
-        }
+      admins.forEach(({ socket: clSocket }) => {
+        clSocket.emit('updateActiveUsers', { userName, userAnswer });
       });
     } catch (e) {
       console.log(e);
@@ -150,14 +152,15 @@ io.on('connection', async (socket) => {
 
   socket.on('registerAdmin', async () => {
     try {
-      clients.set(id, { socket, name: 'admin', isAdmin: true });
+      isAdmin = true;
+      admins.set(id, { socket, name: 'admin' });
       const getRows = await sheet.get(defaultOptions);
       const data = getRows?.data?.values?.[0] || [];
       socket.emit('loadTasks', combineRest(data));
       const onlineUsers = getOnlineUsers();
       socket.emit('loadOnlineUsers', JSON.stringify(onlineUsers));
       socket.emit('loadActiveUsers', JSON.stringify(
-        drop(getRows?.data?.values).map((users) => combineRest(users)),
+        drop(getRows?.data?.values).map((usersData) => combineRest(usersData)),
       ));
       socket.emit('loadTextValue', textFieldValue);
     } catch (e) {
@@ -183,26 +186,34 @@ io.on('connection', async (socket) => {
         },
       });
 
-      clients.forEach(async ({ socket: clSocket, isAdmin, name }, userId) => {
-        if (isAdmin && id !== userId) {
-          clSocket.emit('loadTasks', combineRest(pair));
-        } else if (!isAdmin) {
-          const userAnswer = JSON.stringify({
-            userName: name,
-            tasks,
-          });
-          const useAnswerChunk = chunk(userAnswer, 49999).map((chunkStr) => chunkStr.join(''));
+      const usersAnswers = [];
 
-          await sheet.append({
-            ...defaultOptions,
-            valueInputOption: 'RAW',
-            resource: {
-              values: [[name, ...useAnswerChunk]],
-            },
-          });
-          clSocket.emit('loadUserAnswer', userAnswer);
-        }
+      users.forEach(async ({ socket: clSocket, name }) => {
+        const userAnswer = JSON.stringify({
+          userName: name,
+          tasks,
+        });
+        const useAnswerChunk = chunk(userAnswer, 49999).map((chunkStr) => chunkStr.join(''));
+
+        usersAnswers.push([name, userAnswer]);
+
+        await sheet.append({
+          ...defaultOptions,
+          valueInputOption: 'RAW',
+          resource: {
+            values: [[name, ...useAnswerChunk]],
+          },
+        });
+        clSocket.emit('loadUserAnswer', userAnswer);
       });
+
+      admins.forEach(({ socket: clSocket }, adminId) => {
+        if (id !== adminId) {
+          clSocket.emit('loadTasks', combineRest(pair));
+        }
+        clSocket.emit('loadActiveUsers', JSON.stringify(usersAnswers));
+      });
+
       textFieldValue = '';
     } catch (e) {
       console.log(e);
@@ -213,13 +224,15 @@ io.on('connection', async (socket) => {
 
   socket.on('disconnect', () => {
     try {
-      clients.delete(id);
-      const onlineUsers = getOnlineUsers();
-      clients.forEach(({ socket: clSocket, isAdmin }) => {
-        if (isAdmin) {
+      if (isAdmin) {
+        admins.delete(id);
+      } else {
+        users.delete(id);
+        const onlineUsers = getOnlineUsers();
+        admins.forEach(({ socket: clSocket }) => {
           clSocket.emit('loadOnlineUsers', JSON.stringify(onlineUsers));
-        }
-      });
+        });
+      }
     } catch (e) {
       console.log(e);
     }
@@ -230,7 +243,12 @@ io.on('connection', async (socket) => {
   socket.on('textFieldChanged', (value) => {
     try {
       textFieldValue = value;
-      clients.forEach(({ socket: clSocket }, userId) => {
+      users.forEach(({ socket: clSocket }, userId) => {
+        if (id !== userId) {
+          clSocket.emit('loadTextValue', value);
+        }
+      });
+      admins.forEach(({ socket: clSocket }, userId) => {
         if (id !== userId) {
           clSocket.emit('loadTextValue', value);
         }
