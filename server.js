@@ -28,7 +28,8 @@ const getSpreadSheet = async () => {
   try {
     if (!auth || !client) {
       auth = new google.auth.GoogleAuth({
-        keyFile: 'credentials.json',
+        // keyFile: 'credentials.json',
+        keyFile: '/home/ec2-user/EngTServer/credentials.json',
         scopes: 'https://www.googleapis.com/auth/spreadsheets',
       });
       client = await auth.getClient();
