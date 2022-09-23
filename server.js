@@ -21,10 +21,9 @@ const io = new Server(server, {
   },
 });
 
-const SHEET = 'sheet1';
 const spreadsheetId = '1WWNhfxQxo7uodXixlOomxmcFT-FlKsyUB8NFekOjBew';
-const keyFile = 'credentials.json';
-// const keyFile = '/home/ec2-user/EngTServer/credentials.json';
+// const keyFile = 'credentials.json';
+const keyFile = '/home/ec2-user/EngTServer/credentials.json';
 
 let auth;
 let client;
@@ -43,7 +42,6 @@ const getSpreadsheet = async () => {
     const defaultOptions = {
       auth,
       spreadsheetId,
-      range: SHEET,
     };
 
     return { spreadsheets: googleSheets.spreadsheets, defaultOptions };
@@ -190,7 +188,7 @@ io.on('connection', async (socket) => {
       });
 
       const sheetId = newSheetData.data.replies?.[0].addSheet.properties.sheetId;
-      ranges.delete(sheetId, title);
+      ranges.set(`${sheetId}`, title);
 
       admins.forEach(({ socket: clSocket }) => {
         clSocket.emit('lessonUpdated', JSON.stringify({ sheetId, title }));
